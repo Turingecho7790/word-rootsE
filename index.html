@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>词源笔记 · 英语构词词典</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="data/seed.js"></script>
+  <script defer src="core.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="shell masthead-inner">
+      <button class="brand" data-page="search" aria-label="词源笔记首页">
+        <span class="mark" aria-hidden="true">r.</span><span>词源笔记</span>
+      </button>
+      <nav aria-label="主导航">
+        <button data-page="search" aria-current="page">查词</button>
+        <button data-page="cards">我的词卡<span id="card-count" class="nav-count" hidden></span></button>
+        <button data-page="lexicon">我的词素</button>
+      </nav>
+    </div>
+  </header>
+  <main class="shell">
+    <section id="search-page">
+      <div class="search-intro">
+        <p class="kicker">ENGLISH WORD ROOTS</p>
+        <h1>英语构词词典<span aria-hidden="true">.</span></h1>
+        <form class="searchbar" id="search-form" role="search">
+          <label class="sr-only" for="query">输入英语单词</label>
+          <span class="search-icon" aria-hidden="true"></span>
+          <input id="query" type="search" placeholder="输入英语单词" maxlength="96" autocomplete="off" spellcheck="false">
+          <button class="primary" type="submit">查词</button>
+        </form>
+        <label id="online-option" class="online-option" hidden>
+          <input type="checkbox" id="online-lookup"> 本地查不到时联网补查英文释义
+        </label>
+        <div class="examples" aria-label="示例单词">
+          <span>试试</span>
+          <button data-word="collaboration">collaboration</button>
+          <button data-word="benevolent">benevolent</button>
+          <button data-word="innovation">innovation</button>
+          <button data-word="visible">visible</button>
+        </div>
+      </div>
+      <div id="results" aria-live="polite"></div>
+    </section>
+    <section id="cards-page" hidden></section>
+    <section id="lexicon-page" hidden></section>
+    <footer class="footer">
+      <span>词源笔记</span>
+      <span id="dataset-summary"></span>
+    </footer>
+  </main>
+  <dialog id="editor"></dialog>
+  <input type="file" id="backup-input" accept=".json,application/json" hidden>
+  <div id="notice" class="toast" role="status" hidden></div>
+</body>
+</html>
