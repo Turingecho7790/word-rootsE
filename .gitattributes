@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Empty optional columns are represented by trailing tabs in this table.
+data/ielts-starter.tsv whitespace=-blank-at-eol
