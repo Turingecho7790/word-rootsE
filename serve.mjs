@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { openDictionary, normalize, validWord } from './dictionary.mjs';
 import { lookupOnline } from './online.mjs';
+import { createModel } from './ai.mjs';
 
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -19,13 +20,13 @@ function json(response, code, body) {
   response.end(JSON.stringify(body));
 }
 
-export function createDictionaryServer(dictionary, onlineLookup = lookupOnline) {
+export function createDictionaryServer(dictionary, onlineLookup = lookupOnline, model = createModel()) {
   const info = dictionary.info();
   return createServer((request, response) =>
-    serve(request, response, dictionary, info, onlineLookup));
+    serve(request, response, dictionary, info, onlineLookup, model));
 }
 
-async function serve(request, response, dictionary, info, onlineLookup) {
+async function serve(request, response, dictionary, info, onlineLookup, model) {
   let url;
   try { url = new URL(request.url ?? '/', 'http://127.0.0.1'); }
   catch {
@@ -34,6 +35,14 @@ async function serve(request, response, dictionary, info, onlineLookup) {
   }
   if (request.method === 'GET' && url.pathname === '/api/info') {
     json(response, 200, info);
+    return;
+  }
+  if (request.method === 'GET' && url.pathname === '/api/ai/status') {
+    json(response, 200, { status: model.status });
+    return;
+  }
+  if (request.method === 'POST' && ['/api/ai/analyze', '/api/ai/chat'].includes(url.pathname)) {
+    await serveModel(request, response, model, url.pathname === '/api/ai/chat' ? 'chat' : 'analyze');
     return;
   }
   if (request.method === 'GET' && url.pathname === '/api/lookup') {
@@ -66,6 +75,43 @@ async function serve(request, response, dictionary, info, onlineLookup) {
     response.end(request.method === 'HEAD' ? undefined : contents);
   } catch {
     response.writeHead(500).end('Unable to load the requested file');
+  }
+}
+
+async function serveModel(request, response, model, operation) {
+  const { host, origin, 'content-type': type } = request.headers;
+  if (!/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(host ?? '')
+    || (origin && origin !== 'http://' + host)) {
+    json(response, 403, { status: 'forbidden' });
+    return;
+  }
+  if (!/^application\/json(?:\s*;|$)/i.test(type ?? '')) {
+    json(response, 415, { status: 'invalid' });
+    return;
+  }
+  if (model.status !== 'ready') {
+    json(response, 503, { status: model.status });
+    return;
+  }
+  const controller = new AbortController();
+  response.once('close', () => controller.abort());
+  try {
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+      bytes += chunk.length;
+      if (bytes > 64 * 1024) {
+        request.resume();
+        json(response, 413, { status: 'invalid' });
+        return;
+      }
+      chunks.push(chunk);
+    }
+    const input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const result = await model[operation](input, controller.signal);
+    if (!response.destroyed) json(response, result.status === 'invalid' ? 400 : 200, result);
+  } catch {
+    if (!response.destroyed) json(response, 400, { status: 'invalid' });
   }
 }
 

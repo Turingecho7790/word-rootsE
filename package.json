@@ -1,10 +1,11 @@
 {
   "name": "word-roots-e",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "engines": { "node": ">=24" },
   "scripts": {
-    "dev": "node serve.mjs",
+    "dev": "node --env-file-if-exists=.env serve.mjs",
+    "test": "node --test",
     "import:ecdict": "node scripts/import-ecdict.mjs",
     "import:ielts": "node scripts/import-ielts.mjs"
   }

@@ -18,6 +18,7 @@
       </button>
       <nav aria-label="主导航">
         <button data-page="search" aria-current="page">查词</button>
+        <button data-page="chat">AI 对话</button>
         <button data-page="cards">我的词卡<span id="card-count" class="nav-count" hidden></span></button>
         <button data-page="lexicon">我的词素</button>
       </nav>
@@ -29,9 +30,9 @@
         <p class="kicker">ENGLISH WORD ROOTS</p>
         <h1>英语构词词典<span aria-hidden="true">.</span></h1>
         <form class="searchbar" id="search-form" role="search">
-          <label class="sr-only" for="query">输入英语单词</label>
+          <label class="sr-only" for="query">输入英语单词或聊天指令</label>
           <span class="search-icon" aria-hidden="true"></span>
-          <input id="query" type="search" placeholder="输入英语单词" maxlength="96" autocomplete="off" spellcheck="false">
+          <input id="query" type="search" placeholder="输入英语单词，或输入「聊天」" maxlength="500" autocomplete="off" spellcheck="false">
           <button class="primary" type="submit">查词</button>
         </form>
         <label id="online-option" class="online-option" hidden>
@@ -42,16 +43,33 @@
           <button data-word="collaboration">collaboration</button>
           <button data-word="benevolent">benevolent</button>
           <button data-word="innovation">innovation</button>
-          <button data-word="visible">visible</button>
+          <button data-word="unhelpfulness">unhelpfulness</button>
         </div>
       </div>
       <div id="results" aria-live="polite"></div>
+    </section>
+    <section id="chat-page" class="page-wrap standalone" hidden>
+      <header class="page-head chat-heading">
+        <h1>AI 对话</h1>
+        <button class="secondary" data-action="clear-chat">新对话</button>
+      </header>
+      <div class="panel chat-panel">
+        <p class="subtle" id="chat-description">发送时，消息会交给你配置的模型服务。对话只保留在当前页面。</p>
+        <ol id="chat-log" class="chat-log" aria-label="对话消息" aria-live="polite"></ol>
+        <p id="chat-status" class="word-extra" role="status"></p>
+        <form id="chat-form">
+          <label class="sr-only" for="chat-input">输入消息</label>
+          <textarea id="chat-input" rows="3" maxlength="2000" placeholder="输入消息" required></textarea>
+          <button class="primary" id="chat-send" type="submit" disabled>发送</button>
+        </form>
+      </div>
     </section>
     <section id="cards-page" hidden></section>
     <section id="lexicon-page" hidden></section>
     <footer class="footer">
       <span>词源笔记</span>
       <span id="dataset-summary"></span>
+      <span id="model-summary"></span>
     </footer>
   </main>
   <dialog id="editor"></dialog>

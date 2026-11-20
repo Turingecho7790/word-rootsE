@@ -88,24 +88,42 @@
   function matchCandidate(index, word, pos = '') {
     const prefixes = index.byRole.prefix.filter(morph => word.startsWith(morph.form)
       && (!morph.condition || morph.condition.includes(word[morph.form.length])));
-    const suffixes = index.byRole.suffix.filter(morph => word.endsWith(morph.form) && (!morph.pos || !pos || morph.pos === pos));
+    const suffixes = index.byRole.suffix.filter(morph => morph.form && word.includes(morph.form));
+    const longest = matches => matches.sort((a, b) => b.segments.length - a.segments.length).slice(0, 4);
     const matches = [];
     for (const pre of [null, ...prefixes]) {
-      for (const suf of [null, ...suffixes]) {
-        if (!pre && !suf) continue;
-        const start = pre?.form.length ?? 0;
-        const end = word.length - (suf?.form.length ?? 0);
-        if (start >= end) continue;
+      const start = pre?.form.length ?? 0;
+      const memo = new Map();
+      function endingAt(end) {
+        if (memo.has(end)) return memo.get(end);
         const base = word.slice(start, end);
-        for (const root of index.byRole.root.filter(morph => morph.form === base)) {
-          const segments = [{ id: root.id, start, end }];
-          if (pre) segments.unshift({ id: pre.id, start: 0, end: start });
-          if (suf) segments.push({ id: suf.id, start: end, end: word.length });
-          matches.push({ segments });
+        const options = (pre || end < word.length) ? index.byRole.root
+          .filter(morph => morph.form === base)
+          .map(root => ({ segments: [{ id: root.id, start, end }] })) : [];
+        for (const suffix of suffixes) {
+          const offset = end - suffix.form.length;
+          if (offset <= start || word.slice(offset, end) !== suffix.form) continue;
+          // The outermost suffix determines the whole word's part of speech.
+          if (end === word.length && pos && suffix.pos && suffix.pos !== pos) continue;
+          for (const option of endingAt(offset)) {
+            options.push({ segments: [...option.segments, { id: suffix.id, start: offset, end }] });
+          }
         }
+        const best = longest(options);
+        memo.set(end, best);
+        return best;
+      }
+      for (const option of endingAt(word.length)) {
+        const segments = pre ? [{ id: pre.id, start: 0, end: start }, ...option.segments] : option.segments;
+        matches.push({ segments });
       }
     }
-    return matches.sort((a, b) => b.segments.length - a.segments.length).slice(0, 4);
+    return longest(matches);
+  }
+
+  function chatCommand(input) {
+    const match = String(input ?? '').trim().match(/^(?:\/?(?:进入|开启|开始|我想)?\s*(?:聊天对话|聊天|对话)(?:模式)?(?=[\s：:，,。！!]|$)|\/chat(?=[\s：:，,。！!]|$))[\s：:，,。！!]*/iu);
+    return match ? String(input).trim().slice(match[0].length) : null;
   }
 
   function related(index, entry, segments) {
@@ -224,6 +242,6 @@
     return value;
   }
 
-  globalThis.WordRootsCore = { roles, normalize, validWord, shownForm, emptyState, indexed, lookup, matchCandidate, related,
+  globalThis.WordRootsCore = { roles, normalize, validWord, shownForm, emptyState, indexed, lookup, matchCandidate, chatCommand, related,
     relationKey, suggestions, validateSegments, makeCard, grade, requireShape };
 })();

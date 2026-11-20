@@ -7,6 +7,14 @@
   let checkingEntry = null;
   let lookupNote = '';
   let remoteSuggestions = [];
+  let modelStatus = 'disabled';
+  let modelReady;
+  let checkingAnalysis = null;
+  let aiAnalysis = null;
+  let aiNote = '';
+  let chatMessages = [];
+  let chatRequest = null;
+  let chatNote = '';
   const $ = selector => document.querySelector(selector);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -95,7 +103,7 @@
     const analysis = usePersonal && personal ? personal : null;
     const matching = !entry.segments.length && !analysis && !result.invalid
       ? core.matchCandidate(index, entry.word, entry.pos) : [];
-    const candidate = matching[candidateIndex];
+    const candidate = matching[candidateIndex] ?? (matching.length === 1 ? matching[0] : null);
     const segments = analysis?.segments ?? candidate?.segments ?? entry.segments;
     const mode = analysis ? '个人拆词' : candidate ? '候选拆法' : entry.mode ?? '构词';
     return { result, entry, personal, matching, segments, mode, candidate };
@@ -103,7 +111,7 @@
 
   function goTo(page) {
     activePage = page;
-    for (const type of ['search', 'cards', 'lexicon']) $('#' + type + '-page').hidden = type !== page;
+    for (const type of ['search', 'cards', 'lexicon', 'chat']) $('#' + type + '-page').hidden = type !== page;
     for (const button of document.querySelectorAll('nav [data-page]')) {
       if (button.dataset.page === page) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
@@ -111,11 +119,16 @@
     if (page === 'search') renderSearch();
     if (page === 'cards') renderCards();
     if (page === 'lexicon') renderLexicon();
+    if (page === 'chat') renderChat();
   }
 
   function query(input, sense = '') {
     checkingEntry?.abort();
     checkingEntry = null;
+    checkingAnalysis?.abort();
+    checkingAnalysis = null;
+    aiAnalysis = null;
+    aiNote = '';
     lookupNote = '';
     remoteSuggestions = [];
     queried = core.normalize(input);
@@ -129,6 +142,8 @@
     goTo('search');
     if (!runningOnFile && core.validWord(queried) && !core.lookup(index, queried).entries.length) {
       fetchEntry(queried, $('#online-lookup').checked);
+    } else {
+      analyzeIfNeeded();
     }
   }
 
@@ -166,6 +181,120 @@
       if (request === checkingEntry) {
         checkingEntry = null;
         if (activePage === 'search') renderSearch();
+        analyzeIfNeeded();
+      }
+    }
+  }
+
+  const modelLabels = {
+    ready: 'AI 已配置',
+    disabled: '配置 .env 并重启服务后即可使用 AI。',
+    misconfigured: '请检查 .env 中的模型地址和模型 ID，再重启服务。',
+    unreachable: '无法读取 AI 配置，请确认本机服务已升级至 v0.3。'
+  };
+
+  async function loadModelStatus() {
+    if (runningOnFile) return;
+    try {
+      const response = await fetch('/api/ai/status');
+      const result = response.ok ? await response.json() : {};
+      modelStatus = Object.hasOwn(modelLabels, result.status) ? result.status : 'unreachable';
+    } catch {
+      modelStatus = 'unreachable';
+    }
+    $('#model-summary').textContent = modelLabels[modelStatus];
+    if (activePage === 'chat') renderChat();
+  }
+
+  async function requestModel(operation, payload, signal) {
+    const response = await fetch('/api/ai/' + operation, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload), signal
+    });
+    return response.json();
+  }
+
+  function modelError(result) {
+    if (result.reason === 'auth') return '模型服务拒绝了请求，请检查 API 密钥和模型权限。';
+    if (result.reason === 'rate-limit') return '模型服务达到请求限额，请稍后再试。';
+    if (result.reason === 'timeout') return '模型响应超时，请稍后再试。';
+    if (result.status === 'busy') return 'AI 正在处理其他请求，请稍后再试。';
+    if (result.status === 'invalid-response') return '模型返回的内容未通过校验。';
+    return '暂时无法连接模型服务，请检查模型地址和网络。';
+  }
+
+  async function analyzeIfNeeded() {
+    if (runningOnFile) return;
+    const { result, entry, matching, personal } = context();
+    if (result.invalid || entry.segments.length || personal || matching.length === 1) return;
+    const controller = new AbortController();
+    checkingAnalysis = controller;
+    await modelReady;
+    if (controller !== checkingAnalysis) return;
+    if (modelStatus !== 'ready') {
+      checkingAnalysis = null;
+      return;
+    }
+    aiNote = 'AI 正在比对词义和拆词规则…';
+    if (activePage === 'search') renderSearch();
+    try {
+      const morphemes = data.morphemes.filter(rule => entry.word.includes(rule.form)).slice(0, 64);
+      const analysis = await requestModel('analyze', { word: entry.word, pos: entry.pos, gloss: entry.gloss, morphemes }, controller.signal);
+      if (controller !== checkingAnalysis) return;
+      if (analysis.status === 'hit') {
+        aiAnalysis = analysis;
+        aiNote = '';
+      } else {
+        aiNote = analysis.status === 'no-analysis' ? 'AI 未找到可靠的拆法。' : modelError(analysis);
+      }
+    } catch {
+      if (controller === checkingAnalysis) aiNote = '连接 AI 接口失败。';
+    } finally {
+      if (controller === checkingAnalysis) {
+        checkingAnalysis = null;
+        if (activePage === 'search') renderSearch();
+      }
+    }
+  }
+
+  function renderChat() {
+    $('#chat-log').innerHTML = chatMessages.map(message => '<li data-role="' + message.role
+      + '"><strong>' + (message.role === 'user' ? '你' : 'AI') + '</strong>' + esc(message.content) + '</li>').join('');
+    $('#chat-status').textContent = chatNote || (runningOnFile ? '请用 npm run dev 启动后打开服务地址。'
+      : modelStatus === 'ready' ? '' : modelLabels[modelStatus]);
+    $('#chat-send').disabled = modelStatus !== 'ready' || !!chatRequest;
+  }
+
+  async function sendChat() {
+    const field = $('#chat-input');
+    const content = field.value.trim();
+    if (!content || chatRequest || modelStatus !== 'ready') return;
+    const controller = new AbortController();
+    const message = { role: 'user', content };
+    chatRequest = controller;
+    chatMessages.push(message);
+    field.value = '';
+    chatNote = '正在等待回复…';
+    renderChat();
+    try {
+      const response = await requestModel('chat', { messages: chatMessages.slice(-11) }, controller.signal);
+      if (controller !== chatRequest) return;
+      if (response.status === 'hit') {
+        chatMessages.push({ role: 'assistant', content: response.reply });
+        chatNote = '';
+      } else {
+        chatNote = modelError(response);
+      }
+    } catch {
+      if (controller === chatRequest) chatNote = '连接 AI 接口失败。';
+    } finally {
+      if (controller === chatRequest) {
+        if (chatMessages.at(-1) === message) {
+          chatMessages.pop();
+          if (!field.value) field.value = content;
+        }
+        chatRequest = null;
+        renderChat();
       }
     }
   }
@@ -175,6 +304,21 @@
       const m = index.morphemes.get(morphId);
       return '<b class="' + esc(m.role) + '">' + esc(core.shownForm(m)) + '</b> ' + esc(m.gloss);
     }).join(' <span aria-hidden="true">＋</span> ');
+  }
+
+  function renderAIAnalysis() {
+    if (!aiAnalysis) return aiNote ? '<p class="word-extra" role="status">' + esc(aiNote) + '</p>' : '';
+    const allRegistered = aiAnalysis.parts.every(part => part.id && index.morphemes.has(part.id));
+    return '<div class="ai-analysis"><span class="status candidate">AI 候选拆法</span>'
+      + '<div class="tiles">' + aiAnalysis.parts.map(part => {
+        const form = core.shownForm({ form: part.text, role: part.role });
+        return '<span class="tile ' + esc(part.role) + '"><span class="role">'
+          + esc(core.roles[part.role] + (part.id ? '' : ' · AI 推测')) + '</span><strong lang="en">'
+          + esc(form) + '</strong><span class="meaning">' + esc(part.meaning) + '</span></span>';
+      }).join('') + '</div>'
+      + (aiAnalysis.reason ? '<p class="word-extra">' + esc(aiAnalysis.reason) + '</p>' : '')
+      + (allRegistered ? '<button class="text-button detail" data-action="review-ai">检查并采用此拆法</button>' : '')
+      + '</div>';
   }
 
   function tiles(word, segments) {
@@ -240,7 +384,7 @@
       + result.entries.map(item => '<button class="chip" data-sense="' + esc(item.id) + '" aria-pressed="' + (item.id === entry.id)
         + '">' + esc((item.pos ?? '') + ' ' + (item.gloss ?? '词典释义').split(/[；，\n]/)[0]) + '</button>').join('') + '</div>' : '';
     const gloss = (entry.pos ? '<span class="muted">' + esc(entry.pos) + '</span> ' : '')
-      + (entry.gloss ? esc(entry.gloss).replace(/\n/g, '<br>') : '词库暂无中文释义。');
+      + (entry.gloss ? esc(entry.gloss).replace(/\n/g, '<br>') : '词库暂无释义。');
     const candidateList = matching.length ? '<details class="detail"' + (candidateIndex >= 0 ? ' open' : '') + '><summary>查看候选拆法</summary>'
       + matching.map((item, i) => '<p><button class="text-button" data-candidate="' + i + '">' + compact(item.segments) + '</button></p>').join('') + '</details>' : '';
     const current = '<section class="panel word-panel">' + header + tabs + '<p class="gloss">' + gloss + '</p>'
@@ -253,8 +397,9 @@
       + '</h3><div class="actions">'
       + (c.personal ? '<button class="text-button" data-action="toggle-analysis">' + (usePersonal ? '查看词库拆词' : '查看个人拆词') + '</button>' : '')
       + (known ? '<button class="text-button" data-action="edit-analysis">编辑我的拆词</button>' : '') + '</div></div>'
-      + (segments.length ? tiles(entry.word, segments) : '<p class="muted">暂无已标注的拆词。</p>')
+      + (segments.length ? tiles(entry.word, segments) : aiAnalysis ? '' : '<p class="muted">暂无已标注的拆词。</p>')
       + candidateList
+      + (usePersonal && c.personal ? '' : renderAIAnalysis())
       + (entry.note || entry.source ? '<details class="detail"><summary>词源与出处</summary>'
         + (entry.note ? '<p>' + esc(entry.note) + '</p>' : '') + '<p>' + sourceLink(entry.source) + '</p></details>' : '')
       + (entry.example ? '<p class="word-extra" lang="en">' + esc(entry.example) + '</p>' : '')
@@ -409,7 +554,7 @@
     });
   }
 
-  function analysisEditor() {
+  function analysisEditor(suggested) {
     const c = context();
     const { entry } = c;
     const known = Boolean(entry.id);
@@ -424,7 +569,7 @@
       + (known ? '' : '<div class="fields"><label>中文释义<input name="gloss" required maxlength="150"></label>'
         + '<label>词性<select name="pos">' + posOptions.map(([value, label]) => '<option value="' + value + '">' + label + '</option>').join('') + '</select></label></div>')
       + '<p class="subtle">可先选中单词里的字母再添加片段，也可手动填写位置。首字母为第 1 位。</p>'
-      + '<div id="segment-rows">' + (c.personal?.segments ?? c.segments).map(renderRow).join('') + '</div>'
+      + '<div id="segment-rows">' + (suggested ?? c.personal?.segments ?? c.segments).map(renderRow).join('') + '</div>'
       + '<div class="actions"><button type="button" class="text-button" id="add-segment">添加片段</button></div>', (fields, form) => {
       const segments = [...form.querySelectorAll('.segment-edit')].map(row => ({
         id: row.querySelector('.seg-id').value, start: Number(row.querySelector('.seg-start').value) - 1, end: Number(row.querySelector('.seg-end').value)
@@ -500,6 +645,18 @@
   function handleAction(action) {
     if (action === 'view-cards') goTo('cards');
     if (action === 'edit-analysis') analysisEditor();
+    if (action === 'review-ai' && aiAnalysis?.parts.every(part => part.id && index.morphemes.has(part.id))) {
+      analysisEditor(aiAnalysis.parts);
+    }
+    if (action === 'clear-chat') {
+      chatRequest?.abort();
+      chatRequest = null;
+      chatMessages = [];
+      chatNote = '';
+      $('#chat-input').value = '';
+      renderChat();
+      $('#chat-input').focus();
+    }
     if (action === 'close-editor') $('#editor').close();
     if (action === 'export') exportBackup();
     if (action === 'import') $('#backup-input').click();
@@ -543,7 +700,20 @@
     });
     $('#search-form').addEventListener('submit', event => {
       event.preventDefault();
-      query($('#query').value);
+      const field = $('#query');
+      const draft = core.chatCommand(field.value);
+      if (draft === null) {
+        query(field.value);
+        return;
+      }
+      field.value = queried;
+      goTo('chat');
+      if (draft) $('#chat-input').value = draft;
+      $('#chat-input').focus();
+    });
+    $('#chat-form').addEventListener('submit', event => {
+      event.preventDefault();
+      sendChat();
     });
     $('#backup-input').addEventListener('change', event => {
       const [file] = event.target.files;
@@ -636,6 +806,7 @@
     $('#dataset-summary').textContent = starterSummary + (legacyDictionary.length ? ' · 旧版词典 ' + legacyDictionary.length + ' 条' : '');
     $('#online-option').hidden = runningOnFile;
     attach();
+    modelReady = loadModelStatus();
     query(queried);
     if (!runningOnFile) {
       try {
